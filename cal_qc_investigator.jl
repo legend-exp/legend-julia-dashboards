@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.32
+# v0.19.38
 
 using Markdown
 using InteractiveUtils
@@ -16,7 +16,7 @@ end
 
 # ╔═╡ ecc1218c-a408-4de6-8cb5-40d29613b9e7
 # ╠═╡ show_logs = false
-import Pkg; Pkg.activate("/home/iwsatlas1/henkes/l200/auto/")
+import Pkg; Pkg.activate("/home/iwsatlas1/henkes/l200/")
 
 # ╔═╡ 2f337776-68cd-4b38-9047-88742bfa1c8a
 begin
@@ -27,8 +27,7 @@ end
 # ╔═╡ 493bdebf-7802-4938-8693-5e0648bd8a2b
 # ╠═╡ show_logs = false
 begin
-	ENV["JULIA_DEBUG"] = Main # enable debug
-	ENV["JULIA_CPU_TARGET"] = "generic" # enable AVX2
+	# ENV["JULIA_DEBUG"] = Main # enable debug
 	# import Pkg; Pkg.instantiate(); Pkg.precompile() # load packages
 	
 	using LegendDataManagement, PropertyFunctions, TypedTables, PropDicts
@@ -36,6 +35,8 @@ begin
 	using LegendHDF5IO, LegendDSP, LegendSpecFits
 	using Distributed, ProgressMeter
 	using TypedTables
+	using Measurements
+	using Measurements: value, uncertainty
 	
 	using LegendDataTypes
 	using LegendDataTypes: fast_flatten, flatten_by_key, map_chunked
@@ -108,77 +109,71 @@ begin
 	@info "Investigate DSP for period $period and run $run"
 	
 	filekeys = sort(search_disk(FileKey, l200.tier[:raw, :cal, period, run]), by = x-> x.time)
-	filekey = filekeys[1]
+	filekey = start_filekey(l200, (period, run, :cal))
 	@info "Found filekey $filekey"
-	chinfo = channel_info(l200, filekey) |> filterby(@pf $system == :geds && $processable)
+	chinfo = channelinfo(l200, filekey; system=:geds, only_processable=true)
 	
-	sel = LegendDataManagement.ValiditySelection(filekey.time, :cal)
-	dsp_meta = l200.metadata.dataprod.config.cal.dsp(sel).default
-	dsp_config = create_dsp_config(dsp_meta)
+    dsp_config = DSPConfig(dataprod_config(l200).dsp(filekey).default)
 	@debug "Loaded DSP config: $(dsp_config)"
 	
-	pars_tau = l200.par[:cal, :decay_time, period, run]
+	pars_tau = get_values(l200.par.rpars.pz[period, run])
 	@debug "Loaded decay times"
 	
-	pars_optimization = l200.par[:cal, :optimization, period, run] 
+    pars_fltoptimization = get_values(l200.par.rpars.fltopt[period, run]);
 	@debug "Loaded optimization parameters"
-end
+end;
 
 # ╔═╡ 0e685d5c-2cfd-4f02-90a7-846b62a6426b
 md"Select detector"
 
 # ╔═╡ 6f67faca-1065-43f6-94a2-345ac74a6a6f
-@bind det Select(sort(chinfo.detector), default=:V09372A)
+@bind det Select(sort(chinfo.detector), default=DetectorId(:V09372A))
 
 # ╔═╡ f5140e3a-2601-489a-9098-dc78b24ec0c3
 begin
-	i = findfirst(x -> x == det, chinfo.detector)
-	ch_short = chinfo.channel[i]
-	ch = format("ch{}", ch_short)
-	string_number = chinfo.string[i]
-	pos_number = chinfo.position[i]
-	cc4_name = chinfo.cc4[i] * "$(chinfo.cc4ch[i])"
+	chinfo_ch = channelinfo(l200, (period, run, :cal), det)
+	ch = chinfo_ch.channel
+	string_number = chinfo_ch.detstring
+	pos_number = chinfo_ch.location
+	cc4_name = chinfo_ch.cc4
 	# check if channel can be processed
 	if !haskey(pars_tau, det)
     	@warn "No decay time for detector $det, skip channel $ch"
 	else
 		@info "Selected detector: $det at string $string_number position $pos_number" 
 	end
-	τ = pars_tau[det].tau.val*u"µs"
-	pars_filter = pars_optimization[det]
+	τ = pars_tau[det].tau
+	pars_filter = pars_fltoptimization[det]
+
+	qc_config = dataprod_config(l200).qc(filekey)
+	pulser_config = merge(qc_config.pulser.default, get(qc_config.pulser, det, PropDict()))
+	qc_config = merge(qc_config.default, get(qc_config, det, PropDict()))
 end;
 
 # ╔═╡ 73d945de-e5c7-427e-a75a-b0df28f86bd4
 begin
-	if haskey(l200.metadata.dataprod.config.cal.qc(sel), det)
-    	qc_config = merge(l200.metadata.dataprod.config.cal.qc(sel).default, l200.metadata.dataprod.config.cal.qc(sel)[det])
-    	@debug "Use config for detector $det"
-	else
-    	qc_config = l200.metadata.dataprod.config.cal.qc(sel).default
-    	@debug "Use default config"
-	end
 	ch_filekeys = Vector{FileKey}()
-	ch_filekeys_idx = TypedTables.Table(fk = Vector{FileKey}(), fk_idx = Vector{Int64}())
+	ch_filekeys_idx = TypedTables.Table(fk = Vector{FileKey}(), fk_idx = Vector{Int}())
 	for fk in filekeys
-	    if !isfile(l200.tier[:dsp, fk])
-	        @warn "File $(basename(l200.tier[:dsp, fk])) does not exist, skip"
+	    if !isfile(l200.tier[:jldsp, fk])
+	        @warn "File $(basename(l200.tier[:jldsp, fk])) does not exist, skip"
 	        continue
 	    end
-	    if !haskey(LHDataStore(l200.tier[:dsp, fk], "r"), ch)
-	        @warn "Channel $ch not found in $(basename(l200.tier[:dsp, fk])), skip"
+	    if !haskey(LHDataStore(l200.tier[:jldsp, fk], "r"), "$ch")
+	        @warn "Channel $ch not found in $(basename(l200.tier[:jldsp, fk])), skip"
 	        continue
 	    end
 	    push!(ch_filekeys, fk)
-		append!(ch_filekeys_idx.fk, fill(fk, length(LHDataStore(l200.tier[:dsp, fk], "r")[ch])))
-		append!(ch_filekeys_idx.fk_idx, collect(eachindex(LHDataStore(l200.tier[:dsp, fk], "r")[ch])))
+		append!(ch_filekeys_idx.fk, fill(fk, length(lh5open(l200.tier[:jldsp, fk], "r")["$ch"])))
+		append!(ch_filekeys_idx.fk_idx, collect(eachindex(lh5open(l200.tier[:jldsp, fk], "r")["$ch"])))
 	end
 	data_ch = fast_flatten([
-	    LHDataStore(
+	    lh5open(
 	        ds -> begin
 	            @debug "Reading from \"$(ds.data_store.filename)\""
-	            ds[ch][:]
+	            ds["$ch"][:]
 	        end,
-	        l200.tier[:dsp, fk]
+	        l200.tier[:jldsp, fk]
 	    ) for fk in ch_filekeys
 	])
 	
@@ -198,7 +193,7 @@ data_raw_ch = [
     LHDataStore(
         ds -> begin
             @debug "Reading from \"$(ds.data_store.filename)\""
-            ds[ch*"/raw/"][:]
+            ds["$ch/raw/"][:]
         end,
         l200.tier[:raw, fk]
 	) for fk in selected_filekeys];
@@ -242,7 +237,7 @@ begin
 	blsigma_qc = result_blsigma.low_cut .< data_ch.blsigma .< result_blsigma.high_cut
 	@debug format("Baseline Sigma cut surrival fraction {:.2f}%", count(blsigma_qc) / length(data_ch) * 100)
 	
-	result_blslope, report_blslope = get_centered_gaussian_window_cut(data_ch.blslope, qc_config.blslope.min*u"ns^-1", qc_config.blslope.max*u"ns^-1", dsp_config_slider.bl_slope_sigma,; n_bins_cut=convert(Int64, round(length(data_ch)/20)), relative_cut=qc_config.blslope.relative_cut);
+	result_blslope, report_blslope = get_centered_gaussian_window_cut(data_ch.blslope, qc_config.blslope.min, qc_config.blslope.max, dsp_config_slider.bl_slope_sigma,; n_bins_cut=convert(Int64, round(length(data_ch)/20)), relative_cut=qc_config.blslope.relative_cut);
 
 	blslope_qc = result_blslope.low_cut .< data_ch.blslope .< result_blslope.high_cut
     @debug format("Baseline Slope cut surrival fraction {:.2f}%", count(blslope_qc) / length(data_ch) * 100)
@@ -253,7 +248,7 @@ begin
 	e_cut = data_ch.e_trap .> 0 .&& .!isnan.(data_ch.e_trap)
     @debug format("Energy cut surrival fraction {:.2f}%", count(e_cut) / length(data_ch) * 100)
 
-	inTrace_qc = .!(data_ch.inTrace_intersect .> data_ch.t0 .+ 2 .* data_ch.drift_time .&& data_ch.inTrace_n .> 1)
+	inTrace_qc = .!(data_ch.inTrace_intersect .> data_ch.t0 .+ 1.2 .* data_ch.drift_time .&& data_ch.inTrace_n .> 1)
 	@debug format("Intrace pile-up cut surrival fraction {:.2f}%", count(inTrace_qc) / length(data_ch) * 100)
 
 	qc = blmean_qc .&& blslope_qc .&& blsigma_qc .&& t0_qc .&& inTrace_qc .&& e_cut
@@ -262,7 +257,7 @@ end;
 
 # ╔═╡ e2e070a1-0517-43d3-b94e-f38380a7012e
 begin
-	p_blmean = plot(report_blmean, xlabel="Baseline Mean (ADC)", ylabel="Counts")
+	p_blmean = plot(report_blmean, xlabel="Baseline Mean (ADC)", ylabel="Counts", ylims=(0,1.5*maximum(report_blmean.h.weights)))
 	p_blsigma = plot(report_blsigma, xlabel="Baseline Std (ADC)", ylabel="Counts")
 	p_blslope = plot(report_blslope, xlabel="Baseline Slope (1/ns)", ylabel="Counts")
 	p_t0 = histogram(data_ch.t0, bins=:fd, xlabel="t0", ylabel="Counts", xlims=(40, 55))
@@ -270,6 +265,15 @@ begin
 	vspan!([dsp_config_slider.t0_min, dsp_config_slider.t0_max], label="Cut Window", color=:lightgreen, alpha=0.2)
 	plot([p_blmean, p_blsigma, p_blslope, p_t0]..., layout=(2,2), size=(1500, 1300), legend=:outertopright, bottom_margin=50*Plots.mm, plot_title=format("{} Julia Cal. QC Investigator ({}-{}-{}-{})", string(det), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
 end
+
+# ╔═╡ 35e5c62d-2995-49e4-a11a-918feff612ac
+begin
+	pulser_tag = pulser_cal_qc(data_ch, pulser_config; n_pulser_identified=1000)
+	pulser_qc = data_ch[findall(x -> !(x in pulser_tag), eachindex(data_ch))]
+end;
+
+# ╔═╡ 159707d3-8b86-4659-a29b-e36d3e581250
+histogram(data_ch.drift_time, bins=0:1:2.5e3)
 
 # ╔═╡ cc99755f-be83-4525-8850-a9df59eaca15
 function detector_plot_config_input(dsp_pars::Vector)
@@ -292,15 +296,7 @@ function detector_plot_config_input(dsp_pars::Vector)
 end;
 
 # ╔═╡ d4d256f0-45c5-4f2b-bbc2-3f44b2802805
-@bind detector_plot_config_slider detector_plot_config_input([["n_bins_e", (1000:200:15000), 10000], ["e_cut_left", (0:1:maximum(data_ch.e_trap[e_cut])), 0], ["e_cut_right", (0:1:maximum(data_ch.e_trap[e_cut])), 1.01*quantile(data_ch.e_trap[e_cut], 0.99)]])
-
-# ╔═╡ 33face90-16fa-4865-918f-c7a547eec7a3
-begin
-	stephist(data_ch.e_trap[e_cut], bins=detector_plot_config_slider.n_bins_e, xlabel="Energy", ylabel="Counts", yscale=:log10, size=(1200, 600), label="e_trap")
-	plot!(fill(detector_plot_config_slider.e_cut_left, 2), [0.1, 1e4], label="Energy Cut Window", color=:red, lw=2.5, ls=:dot)
-	plot!(fill(detector_plot_config_slider.e_cut_right, 2), [0.1, 1e4], label="Energy Cut Window", color=:red, lw=2.5, ls=:dot, showlegend=false)
-	xlims!(-300, 1.3*quantile(data_ch.e_trap[e_cut], 0.99))
-end
+@bind detector_plot_config_slider detector_plot_config_input([["bin_width_e", (0:0.5:1000), 5], ["e_cut_left", (0:1:maximum(data_ch.e_trap[e_cut])), 0], ["e_cut_right", (0:1:maximum(data_ch.e_trap[e_cut])), 1.01*quantile(data_ch.e_trap[e_cut], 0.99)]])
 
 # ╔═╡ 73cbfa7e-b18c-4e2f-a39f-ae68bbf4a6fb
 cut_options = Dict(["BlMean", "BlStd", "BlSlope", "t0", "pile-up"] .=> [blmean_qc, blsigma_qc, blslope_qc, t0_qc, inTrace_qc]);
@@ -319,6 +315,15 @@ begin
 	fk_rejected = ch_filekeys_idx[.!accepted_idx .&& detector_plot_config_slider.e_cut_left .< data_ch.e_trap .< detector_plot_config_slider.e_cut_right]
 	@info format("Surrival fraction in energy window: {:.2f}%", length(fk_accepted)/(length(fk_accepted) + length(fk_rejected))*100)
 end;
+
+# ╔═╡ 33face90-16fa-4865-918f-c7a547eec7a3
+begin
+	stephist(data_ch.e_trap[e_cut], bins=0:detector_plot_config_slider.bin_width_e:maximum(data_ch.e_trap[e_cut]), xlabel="Energy", ylabel="Counts", yscale=:log10, size=(1200, 600), label="e_trap")
+	stephist!(data_ch.e_trap[accepted_idx], bins=0:detector_plot_config_slider.bin_width_e:maximum(data_ch.e_trap[e_cut]), label="e_trap_after QC")
+	plot!(fill(detector_plot_config_slider.e_cut_left, 2), [0.1, 1e4], label="Energy Cut Window", color=:red, lw=2.5, ls=:dot)
+	plot!(fill(detector_plot_config_slider.e_cut_right, 2), [0.1, 1e4], label="Energy Cut Window", color=:red, lw=2.5, ls=:dot, showlegend=false, xformatter=:plain)
+	xlims!(-300, 1.3*quantile(data_ch.e_trap[e_cut], 0.99))
+end
 
 # ╔═╡ 42bc464c-d84f-42f2-864a-9904c02bb9d0
 begin
@@ -358,12 +363,6 @@ begin
 	p_rejected = plot(u"µs", NoUnits, size=(1500, 500), legend=:outertopright, thickness_scaling=1.0, title="Rejected Events")
 	plot!(wvfs_rejected[idx_wvfs_plot], label=permutedims(ts_rejected[idx_wvfs_plot]), color=permutedims(wvfs_plot_colors))
 end
-
-# ╔═╡ 43204bc4-c869-4a76-ba93-500a33c39b89
-# vline_options = Dict(["t0", "t10", "t50", "t90", "t99", "area1", "area2"] .=> [t0, t10, t50, t90, t99, t0 .+ dsp_config_slider.qdrift_window, t0 .+ (2 * dsp_config_slider.qdrift_window)]);
-
-# ╔═╡ b5ddd0ba-a771-4f2e-94e1-ab9e994d69b3
-# @bind vline_type_selector MultiCheckBox(sort(collect(keys(vline_options))))
 
 # ╔═╡ bb81cf12-32c9-4bd0-92a8-b727fcf9b098
 function detector_config_input(dsp_pars::Vector)
@@ -411,6 +410,8 @@ end;
 # ╟─89bfab7a-9f29-49e0-a313-544125367ee8
 # ╟─ee95f35f-4c9c-4323-8f97-4beafab379fe
 # ╟─e2e070a1-0517-43d3-b94e-f38380a7012e
+# ╟─35e5c62d-2995-49e4-a11a-918feff612ac
+# ╟─159707d3-8b86-4659-a29b-e36d3e581250
 # ╟─cc99755f-be83-4525-8850-a9df59eaca15
 # ╟─d4d256f0-45c5-4f2b-bbc2-3f44b2802805
 # ╟─33face90-16fa-4865-918f-c7a547eec7a3
@@ -424,6 +425,4 @@ end;
 # ╟─97f7da06-a687-4c62-a8d3-bc42430a9ff1
 # ╟─64f2fef7-57f7-4c7a-ba83-99be01e3082b
 # ╟─71f6a835-ebac-49e6-aac1-bbcc4d73bfe8
-# ╟─43204bc4-c869-4a76-ba93-500a33c39b89
-# ╟─b5ddd0ba-a771-4f2e-94e1-ab9e994d69b3
 # ╟─bb81cf12-32c9-4bd0-92a8-b727fcf9b098
