@@ -138,7 +138,7 @@ md"Select filter type"
 
 # ╔═╡ 8c15ffad-4a3f-49da-8278-4298c11c7d4a
 begin
-	e_types = [ft for ft in Symbol.(l200.metadata.dataprod.config.cal.energy(sel).default.energy_types)]
+	e_types = [ft for ft in Symbol.(l200.metadata.dataprod.config.energy(sel).default.energy_types)]
 	@bind e_type Select(e_types, default=:e_trap)
 end	
 
@@ -147,6 +147,12 @@ md"Select peak for resolution plot"
 
 # ╔═╡ 4878e314-bdea-4354-960f-8f86e385e295
 @bind res_peak_plot Select(Symbol.(["Tl208a", "Bi212a", "Tl208b", "Tl208DEP", "Bi212FEP", "Tl208SEP", "Tl208FEP", "Qbb"]), default=:Qbb)
+
+# ╔═╡ 3e553316-461c-47fe-ab83-5537f53de6a9
+md"Select CTC for resolution plot"
+
+# ╔═╡ 21f8c2f9-d88e-46af-b7d7-20eaaf715426
+@bind ctc_on Select([:no_ctc, :ctc], default=:ctc)
 
 # ╔═╡ db3beed2-4c44-465b-b877-185bf2e8860d
 pars = l200.par[:cal, :energy, period, run];
@@ -161,7 +167,11 @@ begin
 	yerrvalues = Float64[]
 	pvalues = Float64[]
 	perrvalues = Float64[]
-	
+
+	e_type_ctc = e_type
+	if ctc_on == :ctc
+		e_type_ctc = Symbol("$(e_type)_ctc")
+	end
 	for s in sort(unique(chinfo.string))
 	    push!(labels, format("String:{:02d}", s))
 	    push!(vlines, length(labels))
@@ -171,11 +181,11 @@ begin
 	        push!(xvalues, length(labels))
 	        if haskey(pars, det)
 				if res_peak_plot == :Qbb
-	            	val = pars[det][e_type].energy.fwhm_qbb
-					val_err = pars[det][e_type].energy.fwhm_qbb_err
+	            	val = pars[det][e_type_ctc].energy.fwhm_qbb
+					val_err = pars[det][e_type_ctc].energy.fwhm_qbb_err
 				else
-					val = pars[det][e_type].energy[res_peak_plot].fwhm
-					val_err = pars[det][e_type].energy[res_peak_plot].err.fwhm
+					val = pars[det][e_type_ctc].energy[res_peak_plot].fwhm
+					val_err = pars[det][e_type_ctc].energy[res_peak_plot].err.fwhm
 				end
 	            if val isa Number && val > 0
 	                push!(yvalues, val)
@@ -231,16 +241,19 @@ begin
 	    xticks = (eachindex(labels), labels), xrotation = 90, gridalpha = 0.5, xlims = (0, length(labels) + 2), ylims = (1,5), thickness_scaling=1.5)
 	vline!(vlines,color = :black, lw = 2, label = "", left_margin=10Plots.mm, bottom_margin=15Plots.mm, 
 	    legendfontsize = 12, title = format("Julia Software Stack: {} Resolution ({}-{}-{}-{})", string(res_peak_plot), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
-	scatter!(xvalues, yvalues, ms = 4, label = "$e_type average: " * format("{:.2f}keV", mean(filter(!isnan, yvalues)[filter(!isnan, yvalues) .< 5])), color = 1, yerr = yerrvalues)
+	scatter!(xvalues, yvalues, ms = 4, label = "$e_type $ctc_on average: " * format("{:.2f}keV", mean(filter(!isnan, yvalues)[filter(!isnan, yvalues) .< 5])), color = 1, yerr = yerrvalues, legend=:bottomright)
 	#scatter!(xvalues, pvalues, ms = 6, label = "Pygama: " * format("{:.2f}keV", mean(filter(!isnan, pvalues))), color = 2, yerr = perrvalues)
 	multicolor_xticks!(labelcolors[1:end-1])
 end
+
+# ╔═╡ 7485563e-8f49-498b-8dba-1c375a9e5fed
+selected_dets = vcat(sort(chinfo.detector), [:None]);
 
 # ╔═╡ 0e685d5c-2cfd-4f02-90a7-846b62a6426b
 md"Select detector"
 
 # ╔═╡ 6f67faca-1065-43f6-94a2-345ac74a6a6f
-@bind det Select(sort(chinfo.detector), default=:V09372A)
+@bind det Select(selected_dets, default=:None)
 
 # ╔═╡ 0e3376e3-b56f-4529-baaf-6bcb72b054f7
 begin
@@ -251,19 +264,19 @@ end;
 
 # ╔═╡ 06fe4ab8-c5e5-4ca9-ad72-ec5b78f6e45f
 begin
-	if haskey(l200.metadata.dataprod.config.cal.energy(sel), det)
-		energy_config = merge(l200.metadata.dataprod.config.cal.energy(sel).default, l200.metadata.dataprod.config.cal.energy(sel)[det])
+	if haskey(l200.metadata.dataprod.config.energy(sel), det)
+		energy_config = merge(l200.metadata.dataprod.config.energy(sel).default, l200.metadata.dataprod.config.energy(sel)[det])
 		@debug "Use energy config for detector $det"
 	else
-		energy_config = l200.metadata.dataprod.config.cal.energy(sel).default
+		energy_config = l200.metadata.dataprod.config.energy(sel).default
 		@debug "Use default config for energy"
 	end
 
-	if haskey(l200.metadata.dataprod.config.cal.qc(sel), det)
-		qc_config = merge(l200.metadata.dataprod.config.cal.qc(sel).default, l200.metadata.dataprod.config.cal.qc(sel)[det])
+	if haskey(l200.metadata.dataprod.config.qc(sel), det)
+		qc_config = merge(l200.metadata.dataprod.config.qc(sel).default, l200.metadata.dataprod.config.qc(sel)[det])
 		@debug "Use qc config for detector $det"
 	else
-		qc_config = l200.metadata.dataprod.config.cal.qc(sel).default
+		qc_config = l200.metadata.dataprod.config.qc(sel).default
 		@debug "Use default qc config"
 	end
 
@@ -360,7 +373,7 @@ begin
 	t0_qc = dsp_config_slider.t0_min .< data_ch.t0 .< dsp_config_slider.t0_max
     @debug format("t0 cut surrival fraction {:.2f}%", count(t0_qc) / length(data_ch) * 100)
 
-	e_cut = data_ch.e_trap .> 0 .&& .!isnan.(data_ch.e_trap)
+	e_cut = data_ch.e_trap .> 0 .&& .!isnan.(data_ch.e_trap) .&& .!isnan.(data_ch.e_cusp) .&& .!isnan.(data_ch.e_zac)
     @debug format("Energy cut surrival fraction {:.2f}%", count(e_cut) / length(data_ch) * 100)
 
 	inTrace_qc = .!(data_ch.inTrace_intersect .> data_ch.t0 .+ 2 .* data_ch.drift_time .&& data_ch.inTrace_n .> 1)
@@ -435,7 +448,12 @@ begin
 		quantile_perc = energy_config.quantile_perc
 	end
 	# quantile_perc = 0.999
-	result_simple, report_simple = simple_calibration(getproperty(data_ch_after_qc, e_type) .+ fct .* data_ch_after_qc.qdrift, th228_lines, window_sizes,; n_bins=n_bins, quantile_perc=quantile_perc)
+	result_simple, report_simple = nothing, nothing
+	if ctc_on == :ctc
+		result_simple, report_simple = simple_calibration(getproperty(data_ch_after_qc, e_type) .+ fct .* data_ch_after_qc.qdrift, th228_lines, window_sizes,; n_bins=n_bins, quantile_perc=quantile_perc)
+	else
+		result_simple, report_simple = simple_calibration(getproperty(data_ch_after_qc, e_type), th228_lines, window_sizes,; n_bins=n_bins, quantile_perc=quantile_perc)
+	end
 	plot(report_simple, cal=true, size=(1200, 500), title=format("{} Simple Calibration ({}-{}-{}-{})", string(det), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
 end
 
@@ -524,9 +542,12 @@ end
 # ╟─8c15ffad-4a3f-49da-8278-4298c11c7d4a
 # ╟─634416d9-bedf-4c4c-b08d-b5ed2dae82a0
 # ╟─4878e314-bdea-4354-960f-8f86e385e295
+# ╟─3e553316-461c-47fe-ab83-5537f53de6a9
+# ╟─21f8c2f9-d88e-46af-b7d7-20eaaf715426
 # ╟─db3beed2-4c44-465b-b877-185bf2e8860d
 # ╟─343bb91e-64cd-4061-933c-f9934ceb70c2
 # ╟─f7cf5e78-69b0-45e4-9e6b-b73cb33533cb
+# ╟─7485563e-8f49-498b-8dba-1c375a9e5fed
 # ╟─0e685d5c-2cfd-4f02-90a7-846b62a6426b
 # ╟─6f67faca-1065-43f6-94a2-345ac74a6a6f
 # ╟─0e3376e3-b56f-4529-baaf-6bcb72b054f7

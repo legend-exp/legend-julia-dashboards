@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.32
+# v0.19.38
 
 using Markdown
 using InteractiveUtils
@@ -16,7 +16,7 @@ end
 
 # ╔═╡ ecc1218c-a408-4de6-8cb5-40d29613b9e7
 # ╠═╡ show_logs = false
-import Pkg; Pkg.activate("/home/iwsatlas1/henkes/l200/auto/")
+import Pkg; Pkg.activate("/home/iwsatlas1/henkes/l200/cm2023/")
 
 # ╔═╡ 2f337776-68cd-4b38-9047-88742bfa1c8a
 begin
@@ -29,7 +29,7 @@ end
 begin
 	ENV["JULIA_DEBUG"] = Main # enable debug
 	ENV["JULIA_CPU_TARGET"] = "generic" # enable AVX2
-	# import Pkg; Pkg.instantiate(); Pkg.precompile() # load packages
+	Pkg.instantiate(); Pkg.precompile() # load packages
 	
 	using LegendDataManagement, PropertyFunctions, TypedTables, PropDicts
 	using Unitful, Formatting, LaTeXStrings
@@ -46,6 +46,7 @@ end
 # ╔═╡ cf295ad2-13ca-4508-bf51-5cfc52229fbd
 # ╠═╡ show_logs = false
 begin
+	using PlutoPlotly
 	using Plots
 	plotlyjs()
 end;
@@ -80,6 +81,12 @@ This tool lets you investigate a certain set of waveforms for a specififc detect
 md""" ### Parameter settings
 """
 
+# ╔═╡ a11bc8f3-c095-4100-96af-1e9d3eed0215
+md"Select category"
+
+# ╔═╡ 8c632350-3fb5-462a-95f9-9b26306655fa
+@bind category Select([:cal, :phy], default=:cal)
+
 # ╔═╡ 39b468d4-673c-4834-b042-d80cd9e0dfe7
 md"Select Period"
 
@@ -102,13 +109,13 @@ end
 begin
 	@info "Investigate DSP for period $period and run $run"
 	
-	filekeys = sort(search_disk(FileKey, l200.tier[:raw, :cal, period, run]), by = x-> x.time)
+	filekeys = sort(search_disk(FileKey, l200.tier[:raw, category, period, run]), by = x-> x.time)
 	filekey = filekeys[1]
 	@info "Found filekey $filekey"
-	chinfo = channel_info(l200, filekey) |> filterby(@pf $system == :geds && $processable)
+	chinfo = channel_info(l200, filekey) |> filterby(@pf $system == :geds && $processable && $usability != :off)
 	
-	sel = LegendDataManagement.ValiditySelection(filekey.time, :cal)
-	dsp_meta = l200.metadata.dataprod.config.cal.dsp(sel).default
+	sel = LegendDataManagement.ValiditySelection(filekey.time, category)
+	dsp_meta = l200.metadata.dataprod.config.dsp(sel).default
 	dsp_config = create_dsp_config(dsp_meta)
 	@debug "Loaded DSP config: $(dsp_config)"
 	
@@ -125,7 +132,7 @@ end
 
 # ╔═╡ 9edf7ca3-db5f-422d-ac11-f0e6fd17c087
 begin
-	log_folder = joinpath(l200.tier[:log, :cal, period, run])
+	log_folder = joinpath(l200.tier[:log, category, period, run])
 	log_filename = joinpath(log_folder, format("{}-{}-{}-{}-dsp.md", string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
 	if isfile(log_filename)
 		@info "Load processing log"
@@ -136,8 +143,11 @@ end
 # ╔═╡ 0e685d5c-2cfd-4f02-90a7-846b62a6426b
 md"Select detector"
 
+# ╔═╡ 5df81bc3-f86f-4a85-927c-ef9f3285dc97
+selected_dets = vcat(sort(chinfo.detector), [:None]);
+
 # ╔═╡ 6f67faca-1065-43f6-94a2-345ac74a6a6f
-@bind det Select(sort(chinfo.detector), default=:V09372A)
+@bind det Select(selected_dets, default=:None)
 
 # ╔═╡ f5140e3a-2601-489a-9098-dc78b24ec0c3
 begin
@@ -158,7 +168,7 @@ begin
 end;
 
 # ╔═╡ de7861dc-5665-4e88-ac00-af15ad1ada5c
-md"Select Filekeys (*Multi-Select possible*)"
+md"Select $category Filekeys (*Multi-Select possible*)"
 
 # ╔═╡ d8fef6df-d831-4248-aeae-84869714f76d
 begin
@@ -174,8 +184,7 @@ if !isempty(selected_filekeys)
             ds[ch*"/raw/"][:]
         end,
         l200.tier[:raw, fk]
-	) for fk in selected_filekeys
-	])
+	) for fk in selected_filekeys ])
 end;
 
 # ╔═╡ 4b7b64ec-9689-4a0a-acc1-8f90061e5498
@@ -318,6 +327,11 @@ begin
 
     # t80 determination
     t80 = LegendDSP.get_t80(wvfs_pz, wvf_max)
+
+	# sanity --> replace NaNs to have consistency with the other code
+    replace!(t0, NaN*unit(t0[1]) => zero(t0[1]))
+    replace!(t50, NaN*unit(t50[1]) => zero(t50[1]))
+    replace!(t80, NaN*unit(t80[1]) => zero(t80[1]))
 	
 	# get risetimes and drift times by intersection
 	flt_intersec_90RT = Intersect(mintot = 100u"ns")
@@ -398,7 +412,7 @@ begin
 	inTrace_n           = inTrace_pileUp.multiplicity
 	
 	# get position of current rise start
-    t0_current = uconvert.(u"µs", flt_intersec_inTrace.(wvfs_sgflt_deriv, inTraceCut).x)
+    t50_current = LegendDSP.get_t50(wvfs_sgflt_deriv, maximum.(wvfs_sgflt_deriv.signal))
 
     # invert waveform for DC tagging
     wvfs_pz_inv = multiply_waveform.(wvfs_pz, -1.0)
@@ -474,7 +488,7 @@ end;
 
 # ╔═╡ 97f7da06-a687-4c62-a8d3-bc42430a9ff1
 begin
-	pe = stephist(efc, bins=detector_plot_config_slider.n_bins_efc, yscale=:log10, label="DAQ online energy", xlabel="Energy (ADC)", ylabel="Counts", size=(800, 500))
+	pe = plot(efc, st=:stephist, bins=detector_plot_config_slider.n_bins_efc, yscale=:log10, label="DAQ online energy", xlabel="Energy (ADC)", ylabel="Counts", size=(800, 500))
 	plot!(title=format("{} Julia DSP Investigator ({}-{}-{}-{})", string(det), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
 	ylims!(ylims()[1], ylims()[2])
 	plot!(fill(detector_plot_config_slider.efc_cut_left, 2), [0.1, 1e4], label="Energy Cut Window", color=:red, lw=2.5, ls=:dot)
@@ -502,7 +516,7 @@ begin
 		end
 	end
 	plot!(title=format("{} Julia DSP Investigator ({}-{}-{}-{})", string(det), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
-	plot([p, pe]..., layout=(1,2), size=(2500, 700), legend=:outertopright)
+	PlutoPlot(plot([p, pe]..., layout=(1,2), size=(2500, 700), legend=:outertopright))
 end
 
 # ╔═╡ 12450361-8f9d-401b-9c44-0d9a4156251e
@@ -527,7 +541,7 @@ begin
 end
 
 # ╔═╡ Cell order:
-# ╟─ecc1218c-a408-4de6-8cb5-40d29613b9e7
+# ╠═ecc1218c-a408-4de6-8cb5-40d29613b9e7
 # ╟─98a808df-40ff-4eda-89ee-772147f7e42f
 # ╟─f2cf0e3f-d544-4a0b-bcdf-d02bf9beb9d6
 # ╟─2f337776-68cd-4b38-9047-88742bfa1c8a
@@ -535,6 +549,8 @@ end
 # ╟─d35a8320-ae1e-485d-8751-1a2b36f2b809
 # ╟─24b387ff-5df5-45f9-8857-830bc6580857
 # ╟─493bdebf-7802-4938-8693-5e0648bd8a2b
+# ╟─a11bc8f3-c095-4100-96af-1e9d3eed0215
+# ╟─8c632350-3fb5-462a-95f9-9b26306655fa
 # ╟─39b468d4-673c-4834-b042-d80cd9e0dfe7
 # ╟─2c4dd859-0aa6-4cd2-94b3-7a171368065b
 # ╟─63b6be12-3b55-450a-8a2a-3d410f0dcb6c
@@ -542,14 +558,15 @@ end
 # ╟─dd962859-e7a8-419e-87df-3c2499f013e5
 # ╟─9edf7ca3-db5f-422d-ac11-f0e6fd17c087
 # ╟─0e685d5c-2cfd-4f02-90a7-846b62a6426b
+# ╟─5df81bc3-f86f-4a85-927c-ef9f3285dc97
 # ╟─6f67faca-1065-43f6-94a2-345ac74a6a6f
 # ╟─f5140e3a-2601-489a-9098-dc78b24ec0c3
 # ╟─de7861dc-5665-4e88-ac00-af15ad1ada5c
 # ╟─d8fef6df-d831-4248-aeae-84869714f76d
 # ╟─73d945de-e5c7-427e-a75a-b0df28f86bd4
 # ╟─4b7b64ec-9689-4a0a-acc1-8f90061e5498
-# ╠═35fc04da-4adb-4af6-8f01-452b68577f87
-# ╟─cf295ad2-13ca-4508-bf51-5cfc52229fbd
+# ╟─35fc04da-4adb-4af6-8f01-452b68577f87
+# ╠═cf295ad2-13ca-4508-bf51-5cfc52229fbd
 # ╟─73cbfa7e-b18c-4e2f-a39f-ae68bbf4a6fb
 # ╟─e6a3a08d-9c64-451f-931c-54d8c3e3d6c5
 # ╟─43204bc4-c869-4a76-ba93-500a33c39b89
