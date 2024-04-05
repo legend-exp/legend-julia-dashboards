@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.38
+# v0.19.40
 
 using Markdown
 using InteractiveUtils
@@ -261,8 +261,8 @@ begin
 	p_blsigma = plot(report_blsigma, xlabel="Baseline Std (ADC)", ylabel="Counts")
 	p_blslope = plot(report_blslope, xlabel="Baseline Slope (1/ns)", ylabel="Counts")
 	p_t0 = histogram(data_ch.t0, bins=:fd, xlabel="t0", ylabel="Counts", xlims=(40, 55))
-	vline!([dsp_config_slider.t0_min, dsp_config_slider.t0_max], label="Cut Window", color=:green, lw=3)
-	vspan!([dsp_config_slider.t0_min, dsp_config_slider.t0_max], label="Cut Window", color=:lightgreen, alpha=0.2)
+	# vline!([dsp_config_slider.t0_min, dsp_config_slider.t0_max], label="Cut Window", color=:green, lw=3)
+	# vspan!([dsp_config_slider.t0_min, dsp_config_slider.t0_max], label="Cut Window", color=:lightgreen, alpha=0.2)
 	plot([p_blmean, p_blsigma, p_blslope, p_t0]..., layout=(2,2), size=(1500, 1300), legend=:outertopright, bottom_margin=50*Plots.mm, plot_title=format("{} Julia Cal. QC Investigator ({}-{}-{}-{})", string(det), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
 end
 
@@ -273,7 +273,7 @@ begin
 end;
 
 # ╔═╡ 159707d3-8b86-4659-a29b-e36d3e581250
-histogram(data_ch.drift_time, bins=0:1:2.5e3)
+histogram(data_ch.drift_time, bins=0:1:2.5e3, size=(800, 500))
 
 # ╔═╡ cc99755f-be83-4525-8850-a9df59eaca15
 function detector_plot_config_input(dsp_pars::Vector)
@@ -410,8 +410,8 @@ end;
 # ╟─89bfab7a-9f29-49e0-a313-544125367ee8
 # ╟─ee95f35f-4c9c-4323-8f97-4beafab379fe
 # ╟─e2e070a1-0517-43d3-b94e-f38380a7012e
-# ╟─35e5c62d-2995-49e4-a11a-918feff612ac
-# ╟─159707d3-8b86-4659-a29b-e36d3e581250
+# ╠═35e5c62d-2995-49e4-a11a-918feff612ac
+# ╠═159707d3-8b86-4659-a29b-e36d3e581250
 # ╟─cc99755f-be83-4525-8850-a9df59eaca15
 # ╟─d4d256f0-45c5-4f2b-bbc2-3f44b2802805
 # ╟─33face90-16fa-4865-918f-c7a547eec7a3
