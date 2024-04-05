@@ -27,7 +27,7 @@ end
 # ╔═╡ 493bdebf-7802-4938-8693-5e0648bd8a2b
 # ╠═╡ show_logs = false
 begin
-	ENV["JULIA_DEBUG"] = Main # enable debug
+	# ENV["JULIA_DEBUG"] = Main # enable debug
 	ENV["JULIA_CPU_TARGET"] = "generic" # enable AVX2
 	Pkg.instantiate(); Pkg.precompile() # load packages
 	
@@ -147,7 +147,7 @@ begin
 	chinfo_ch = channelinfo(l200, (period, run, :cal), det)
 	ch = chinfo_ch.channel
 	string_number = chinfo_ch.detstring
-	pos_number = chinfo_ch.location
+	pos_number = chinfo_ch.position
 	cc4_name = chinfo_ch.cc4
 	# check if channel can be processed
 	if !haskey(pars_tau, det)
@@ -216,7 +216,7 @@ function dsp_config_input(dsp_pars::Vector)
 end;
 
 # ╔═╡ ee95f35f-4c9c-4323-8f97-4beafab379fe
-@bind dsp_config_slider dsp_config_input([["bl_mean_min", (0:1:20)u"µs", leftendpoint(dsp_config.bl_window)], ["bl_mean_max", (0:1:60)u"µs", rightendpoint(dsp_config.bl_window)], ["pz_fit_min", (40:1:120)u"µs", leftendpoint(dsp_config.tail_window)], ["pz_fit_max", (40:1:120)u"µs", rightendpoint(dsp_config.tail_window)], ["t0_threshold", (1:1:10), dsp_config.t0_threshold], ["inTraceCut_std_threshold", (1:1:10), dsp_config.inTraceCut_std_threshold], ["qdrift_window_start", (1.5:0.1:10.0)u"µs", 2.5*u"µs"], ["qdrift_window_end", (1.5:0.1:10.0)u"µs", 5.0*u"µs"], ["lq_window_start", (1.5:0.1:10.0)u"µs", 2.5*u"µs"], ["lq_window_end", (1.5:0.1:10.0)u"µs", 2.5*u"µs"],  ["sg_flt_degree", (1:1:5), dsp_config.sg_flt_degree]])
+@bind dsp_config_slider dsp_config_input([["bl_mean_min", (0:1:20)u"µs", leftendpoint(dsp_config.bl_window)], ["bl_mean_max", (0:1:60)u"µs", rightendpoint(dsp_config.bl_window)], ["pz_fit_min", (40:1:120)u"µs", leftendpoint(dsp_config.tail_window)], ["pz_fit_max", (40:1:120)u"µs", rightendpoint(dsp_config.tail_window)], ["t0_threshold", (1:1:10), dsp_config.t0_threshold], ["inTraceCut_std_threshold", (1:1:10), dsp_config.inTraceCut_std_threshold], ["qdrift_window_start", (1.5:0.1:10.0)u"µs", first(dsp_config.qdrift_int_length)], ["qdrift_window_end", (1.5:0.1:10.0)u"µs", last(dsp_config.qdrift_int_length)], ["lq_window_start", (1.5:0.1:10.0)u"µs", first(dsp_config.lq_int_length)], ["lq_window_end", (1.5:0.1:10.0)u"µs", last(dsp_config.lq_int_length)],  ["sg_flt_degree", (1:1:5), dsp_config.sg_flt_degree]])
 
 # ╔═╡ bb81cf12-32c9-4bd0-92a8-b727fcf9b098
 function detector_config_input(dsp_pars::Vector)
@@ -408,7 +408,7 @@ wvfs_options = Dict(["Wvf", "Wvf Bl", "Wvf Pz", "Wvf Trap", "Wvf CUSP", "Wvf ZAC
 @bind wvfs_type_selector MultiCheckBox(collect(keys(wvfs_options)), default=["Wvf Bl"])
 
 # ╔═╡ 43204bc4-c869-4a76-ba93-500a33c39b89
-vline_options = Dict(["t0", "t10", "t50", "t90", "t99", "area1", "area2", "ftp_trap", "ftp_zac/cusp"] .=> [t0, t10, t50, t90, t99, t0 .+ dsp_config_slider.qdrift_window_start, t0 .+ dsp_config_slider.qdrift_window_end, t50 .+ (trap_rt + trap_ft/2), t50 .+ (flt_length_cusp /2)]);
+vline_options = Dict(["t0", "t10", "t50", "t80", "t90", "t99", "area1", "area2", "lq_area1", "lq_area2", "ftp_trap", "ftp_zac/cusp"] .=> [t0, t10, t50, t80, t90, t99, t0 .+ dsp_config_slider.qdrift_window_start, t0 .+ dsp_config_slider.qdrift_window_end, t80 .+ dsp_config_slider.lq_window_start, t80 .+ dsp_config_slider.lq_window_end, t50 .+ (trap_rt + trap_ft/2), t50 .+ (flt_length_cusp /2)]);
 
 # ╔═╡ b5ddd0ba-a771-4f2e-94e1-ab9e994d69b3
 @bind vline_type_selector MultiCheckBox(sort(collect(keys(vline_options))))
@@ -456,7 +456,7 @@ md" Selected subset: $set_n"
 
 # ╔═╡ 54860a44-0823-4cb5-8958-474948138a25
 begin
-	idx_wvfs_plot = rand_wvfs_plot[set_n:set_n+n_wvfs_plot]
+	idx_wvfs_plot = rand_wvfs_plot[set_n:set_n+n_wvfs_plot-1]
 end;
 
 # ╔═╡ 97f7da06-a687-4c62-a8d3-bc42430a9ff1
@@ -480,8 +480,8 @@ begin
 		col = vline_plot_colors[iw]
 		if occursin("area", w)
 			for (area_max, wf, lab) in zip(vline_options[w][idx_wvfs_plot], wvfs_pz[idx_wvfs_plot], ts[idx_wvfs_plot])
-				wf_area_trunc = TruncateFilter(area_max - dsp_config_slider.qdrift_window .. area_max)(wf)
-				plot!(wf_area_trunc.time, fill(0.0, length(wf_area_trunc.signal)), fillrange=wf_area_trunc.signal, fillalpha=0.35, label=lab, color=col, showlegend=false)
+				wf_area_trunc = TruncateFilter(area_max - ifelse(occursin("lq", w), dsp_config_slider.lq_window_start, dsp_config_slider.qdrift_window_start) .. area_max)(wf)
+				plot!(wf_area_trunc.time, fill(0, length(wf_area_trunc.time)), fillrange=wf_area_trunc.signal, fillalpha=0.35, label=lab, color=col, showlegend=false)
 			end
 		end
 		for (vline_type, lab) in zip(vline_options[w][idx_wvfs_plot], ts[idx_wvfs_plot])
@@ -489,6 +489,7 @@ begin
 		end
 	end
 	plot!(title=format("{} Julia DSP Investigator ({}-{}-{}-{})", string(det), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
+	ylims!(-100, ylims()[2])
 	plot([p, pe]..., layout=(1,2), size=(2500, 700), legend=:outertopright)
 end
 
@@ -510,7 +511,7 @@ begin
 	stephist!(e_313, bins=0:detector_plot_config_slider.bin_width_e:maximum(e_313[isfinite.(e_313)]), xlabel="Energy (ADC)", ylabel="Counts", yscale=:log10, label="Trap 313")
 	stephist!(wvf_max, bins=0:detector_plot_config_slider.bin_width_e:maximum(wvf_max[isfinite.(wvf_max)]), xlabel="Energy (ADC)", ylabel="Counts", yscale=:log10, label="Max")
 
-	plot([ptrap, pe_qc]..., layout=(1,2), size=(2000, 700), legend=:outertopright)
+	plot([ptrap, pe_qc]..., layout=(1,2), size=(2500, 700), legend=:outertopright)
 end
 
 # ╔═╡ Cell order:
@@ -521,15 +522,15 @@ end
 # ╟─4933bfe7-2d34-4283-bd4f-2cb0006c5158
 # ╟─d35a8320-ae1e-485d-8751-1a2b36f2b809
 # ╟─24b387ff-5df5-45f9-8857-830bc6580857
-# ╠═493bdebf-7802-4938-8693-5e0648bd8a2b
+# ╟─493bdebf-7802-4938-8693-5e0648bd8a2b
 # ╟─a11bc8f3-c095-4100-96af-1e9d3eed0215
 # ╟─8c632350-3fb5-462a-95f9-9b26306655fa
 # ╟─39b468d4-673c-4834-b042-d80cd9e0dfe7
 # ╟─2c4dd859-0aa6-4cd2-94b3-7a171368065b
 # ╟─63b6be12-3b55-450a-8a2a-3d410f0dcb6c
 # ╟─36232152-9811-4520-ba65-0f855e4ebbe4
-# ╠═dd962859-e7a8-419e-87df-3c2499f013e5
-# ╠═9edf7ca3-db5f-422d-ac11-f0e6fd17c087
+# ╟─dd962859-e7a8-419e-87df-3c2499f013e5
+# ╟─9edf7ca3-db5f-422d-ac11-f0e6fd17c087
 # ╟─0e685d5c-2cfd-4f02-90a7-846b62a6426b
 # ╟─5df81bc3-f86f-4a85-927c-ef9f3285dc97
 # ╟─6f67faca-1065-43f6-94a2-345ac74a6a6f
@@ -540,12 +541,12 @@ end
 # ╟─4b7b64ec-9689-4a0a-acc1-8f90061e5498
 # ╟─60f190de-8ee1-4c81-a73d-6c5f1b52632e
 # ╟─ee95f35f-4c9c-4323-8f97-4beafab379fe
-# ╠═f8a7a29a-bb8b-425a-98b7-147d119d4881
-# ╠═d1edf01c-d641-441b-9281-b32abcdc4d07
-# ╠═29968d00-8146-4479-967d-2f793dcc2c23
-# ╠═ef72ed62-7ea5-4a37-b48e-eb7887a8ed1d
-# ╠═51c6cdc0-5146-477f-89e2-830eab032410
-# ╠═cf295ad2-13ca-4508-bf51-5cfc52229fbd
+# ╟─f8a7a29a-bb8b-425a-98b7-147d119d4881
+# ╟─d1edf01c-d641-441b-9281-b32abcdc4d07
+# ╟─29968d00-8146-4479-967d-2f793dcc2c23
+# ╟─ef72ed62-7ea5-4a37-b48e-eb7887a8ed1d
+# ╟─51c6cdc0-5146-477f-89e2-830eab032410
+# ╟─cf295ad2-13ca-4508-bf51-5cfc52229fbd
 # ╟─73cbfa7e-b18c-4e2f-a39f-ae68bbf4a6fb
 # ╟─e6a3a08d-9c64-451f-931c-54d8c3e3d6c5
 # ╟─43204bc4-c869-4a76-ba93-500a33c39b89
