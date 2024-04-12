@@ -16,7 +16,7 @@ end
 
 # ╔═╡ ecc1218c-a408-4de6-8cb5-40d29613b9e7
 # ╠═╡ show_logs = false
-import Pkg; Pkg.activate("/home/iwsatlas1/henkes/l200/auto/")
+import Pkg; Pkg.activate("/home/iwsatlas1/henkes/l200/")
 
 # ╔═╡ 2f337776-68cd-4b38-9047-88742bfa1c8a
 begin
@@ -36,6 +36,7 @@ begin
 	using LegendHDF5IO, LegendDSP, LegendSpecFits
 	using Distributed, ProgressMeter
 
+	using Measurements
 	using LegendDataTypes
 	using LegendDataTypes: fast_flatten, flatten_by_key, map_chunked
 
@@ -105,7 +106,7 @@ end
 md" Select Usability keys which are not used"
 
 # ╔═╡ 31a21970-e38b-41ab-bf1f-6f92db7d4293
-@bind usable MultiCheckBox([:on, :ac, :no_psd, :off], default=[:off])
+@bind usable MultiCheckBox([:on, :ac, :off], default=[:off])
 
 # ╔═╡ dd962859-e7a8-419e-87df-3c2499f013e5
 begin
@@ -138,7 +139,7 @@ md"Select filter type"
 
 # ╔═╡ 8c15ffad-4a3f-49da-8278-4298c11c7d4a
 begin
-	e_types = [ft for ft in Symbol.(l200.metadata.dataprod.config.energy(sel).default.energy_types)]
+	e_types = [ft for ft in Symbol.(dataprod_config(l200).energy(sel).default.energy_types)]
 	@bind e_type Select(e_types, default=:e_trap)
 end	
 
@@ -148,14 +149,8 @@ md"Select peak for resolution plot"
 # ╔═╡ 4878e314-bdea-4354-960f-8f86e385e295
 @bind res_peak_plot Select(Symbol.(["Tl208a", "Bi212a", "Tl208b", "Tl208DEP", "Bi212FEP", "Tl208SEP", "Tl208FEP", "Qbb"]), default=:Qbb)
 
-# ╔═╡ 3e553316-461c-47fe-ab83-5537f53de6a9
-md"Select CTC for resolution plot"
-
-# ╔═╡ 21f8c2f9-d88e-46af-b7d7-20eaaf715426
-@bind ctc_on Select([:no_ctc, :ctc], default=:ctc)
-
 # ╔═╡ db3beed2-4c44-465b-b877-185bf2e8860d
-pars = l200.par[:cal, :energy, period, run];
+pars = l200.par.rpars.ecal[period, run];
 
 # ╔═╡ 343bb91e-64cd-4061-933c-f9934ceb70c2
 begin
@@ -163,15 +158,8 @@ begin
 	vlines = Int[]
 	xvalues = Int[]
 	notworking = Int[]
-	yvalues = Float64[]
-	yerrvalues = Float64[]
-	pvalues = Float64[]
-	perrvalues = Float64[]
+	yvalues = Quantity{<:Measurement{<:Real}}[]
 
-	e_type_ctc = e_type
-	if ctc_on == :ctc
-		e_type_ctc = Symbol("$(e_type)_ctc")
-	end
 	for s in sort(unique(chinfo.string))
 	    push!(labels, format("String:{:02d}", s))
 	    push!(vlines, length(labels))
@@ -181,38 +169,15 @@ begin
 	        push!(xvalues, length(labels))
 	        if haskey(pars, det)
 				if res_peak_plot == :Qbb
-	            	val = pars[det][e_type_ctc].energy.fwhm_qbb
-					val_err = pars[det][e_type_ctc].energy.fwhm_qbb_err
+	            	val = pars[det][e_type].fwhm.qbb
 				else
-					val = pars[det][e_type_ctc].energy[res_peak_plot].fwhm
-					val_err = pars[det][e_type_ctc].energy[res_peak_plot].err.fwhm
+					val = pars[det][e_type].fit[res_peak_plot].fwhm
 				end
-	            if val isa Number && val > 0
-	                push!(yvalues, val)
-	                push!(yerrvalues, val_err)
-	            else
-	                push!(yvalues, NaN)
-	                push!(yerrvalues, NaN)
-	                push!(notworking, length(labels))
-	            end
+				push!(yvalues, val)
 	        else
-	            push!(yvalues, NaN)
-	            push!(yerrvalues, NaN)
+	            push!(yvalues, measurement(NaN,NaN))
 	            push!(notworking, length(labels))
 	        end
-	        # if ch in keys(pygama_dict)
-	        #     val = pygama_dict[ch]
-	        #     if val isa Number && val > 0
-	        #         push!(pvalues, val)
-	        #         push!(perrvalues, pygama_err_dict[ch])
-	        #     else
-	        #         push!(pvalues, NaN)
-	        #         push!(perrvalues, NaN)
-	        #     end
-	        # else
-	        #     push!(pvalues, NaN)
-	        #     push!(perrvalues, NaN)
-	        # end
 	    end
 	end
 	push!(vlines, length(labels) + 1);
@@ -241,8 +206,7 @@ begin
 	    xticks = (eachindex(labels), labels), xrotation = 90, gridalpha = 0.5, xlims = (0, length(labels) + 2), ylims = (1,5), thickness_scaling=1.5)
 	vline!(vlines,color = :black, lw = 2, label = "", left_margin=10Plots.mm, bottom_margin=15Plots.mm, 
 	    legendfontsize = 12, title = format("Julia Software Stack: {} Resolution ({}-{}-{}-{})", string(res_peak_plot), string(filekey.setup), string(filekey.period), string(filekey.run), string(filekey.category)))
-	scatter!(xvalues, yvalues, ms = 4, label = "$e_type $ctc_on average: " * format("{:.2f}keV", mean(filter(!isnan, yvalues)[filter(!isnan, yvalues) .< 5])), color = 1, yerr = yerrvalues, legend=:bottomright)
-	#scatter!(xvalues, pvalues, ms = 6, label = "Pygama: " * format("{:.2f}keV", mean(filter(!isnan, pvalues))), color = 2, yerr = perrvalues)
+	scatter!(xvalues, ustrip.(u"keV", yvalues), ms = 4, label = "$e_type average: $(round(u"keV", mean(filter(!isnan, yvalues)), digits=2))", color = 1, legend=:bottomright)
 	multicolor_xticks!(labelcolors[1:end-1])
 end
 
@@ -257,9 +221,9 @@ md"Select detector"
 
 # ╔═╡ 0e3376e3-b56f-4529-baaf-6bcb72b054f7
 begin
-	ch_short = chinfo.channel[findfirst(chinfo.detector .==  det)]
-	ch = format("ch{}", ch_short)
-	string_number = chinfo.string[findfirst(chinfo.detector .==  det)]
+	chinfo_ch = channelinfo(l200, filekey, det)
+	ch = chinfo_ch.channel
+	string_number = chinfo_ch.detstring
 end;
 
 # ╔═╡ 06fe4ab8-c5e5-4ca9-ad72-ec5b78f6e45f
@@ -529,7 +493,7 @@ end
 # ╟─4933bfe7-2d34-4283-bd4f-2cb0006c5158
 # ╟─d35a8320-ae1e-485d-8751-1a2b36f2b809
 # ╟─24b387ff-5df5-45f9-8857-830bc6580857
-# ╟─493bdebf-7802-4938-8693-5e0648bd8a2b
+# ╠═493bdebf-7802-4938-8693-5e0648bd8a2b
 # ╟─39b468d4-673c-4834-b042-d80cd9e0dfe7
 # ╟─2c4dd859-0aa6-4cd2-94b3-7a171368065b
 # ╟─63b6be12-3b55-450a-8a2a-3d410f0dcb6c
@@ -542,8 +506,6 @@ end
 # ╟─8c15ffad-4a3f-49da-8278-4298c11c7d4a
 # ╟─634416d9-bedf-4c4c-b08d-b5ed2dae82a0
 # ╟─4878e314-bdea-4354-960f-8f86e385e295
-# ╟─3e553316-461c-47fe-ab83-5537f53de6a9
-# ╟─21f8c2f9-d88e-46af-b7d7-20eaaf715426
 # ╟─db3beed2-4c44-465b-b877-185bf2e8860d
 # ╟─343bb91e-64cd-4061-933c-f9934ceb70c2
 # ╟─f7cf5e78-69b0-45e4-9e6b-b73cb33533cb
